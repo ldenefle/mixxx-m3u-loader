@@ -41,16 +41,16 @@ def main():
 
     conn = sqlite3.connect(args.mix_db)
 
-    def sql(request):
-        logger.debug(f"SQL => {request}")
-        return conn.execute(request)
+    def sql(request, parameters=()):
+        logger.debug(f"SQL => {request} with {parameters}")
+        return conn.execute(request, parameters)
 
     m3u = args.m3u
     playlist_name = Path(m3u).stem
 
     def find_location(path: str) -> int:
         res = sql(
-            f"SELECT id FROM track_locations WHERE location = '{path}'"
+            "SELECT id FROM track_locations WHERE location = ?", (path,)
         ).fetchone()
         if not res:
             return TRACK_NOT_FOUND
@@ -61,13 +61,13 @@ def main():
     )
 
     def find_track_id(location: int) -> int:
-        res = sql(f"SELECT id FROM library WHERE location = {location}").fetchone()
+        res = sql("SELECT id FROM library WHERE location = ?", (location,)).fetchone()
         return res[0]
 
     tracks_id = list(map(find_track_id, locations))
 
     playlist_id = sql(
-        f"SELECT id FROM Playlists WHERE name = '{playlist_name}'"
+        f"SELECT id FROM Playlists WHERE name = ?", (playlist_name,)
     ).fetchone()
     if not playlist_id:
         max_id = sql(f"SELECT MAX(id) FROM Playlists").fetchone()
@@ -88,11 +88,26 @@ def main():
     # Generate the tracklist
     for t in tracks_id:
         sql(
-            f"INSERT INTO PlaylistTracks (playlist_id, track_id, position, pl_datetime_added) VALUES ({playlist_id}, {t}, {position}, '{now}')"
+            "INSERT INTO PlaylistTracks (playlist_id, track_id, position, pl_datetime_added) VALUES (:playlist_id, :track_id, :position, :pl_datetime_added)",
+            {
+                "playlist_id": playlist_id,
+                "track_id": t,
+                "position": position,
+                "pl_datetime_added": now,
+            },
         )
 
     sql(
-        f"INSERT INTO Playlists (id, name, position, date_created, date_modified, hidden, locked) VALUES ({playlist_id}, '{playlist_name}', {playlist_id}, '{now}', '{now}', 0, 0)"
+        f"INSERT INTO Playlists (id, name, position, date_created, date_modified, hidden, locked) VALUES (:id, :name, :position, :date_created, :date_modified, :hidden, :locked)",
+        {
+            "id": playlist_id,
+            "name": playlist_name,
+            "position": playlist_id,
+            "date_created": now,
+            "date_modified": now,
+            "hidden": 0,
+            "locked": 0,
+        },
     )
 
     conn.commit()
