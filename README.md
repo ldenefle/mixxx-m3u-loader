@@ -16,4 +16,14 @@ make install
 
 ## Usage
 
+```
+usage: mixxx-m3u-loader [-h] --mix-db MIX_DB --m3u M3U [-v]
 
+options:
+  -h, --help       show this help message and exit
+  --mix-db MIX_DB  The mixxx DB path, typically on linux $HOME/.mixxx/mixxxdb.sqlite
+  --m3u M3U        Path of the m3u to add as a mixxx tracklist
+  -v, --verbose    Control script verbosity
+```
+
+The script currently deletes a playlist and the associated PlaylistTracks but the song analysis lives in another table of the SQL db so it's not an issue, if the m3u becomes too long it could be worth optimizing later though.
