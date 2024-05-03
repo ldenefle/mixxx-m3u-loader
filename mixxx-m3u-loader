@@ -18,6 +18,89 @@ def read_locations(m3u):
                 yield str(line).strip()
 
 
+def run(mix_db: str, m3u: str) -> None:
+    conn = sqlite3.connect(mix_db)
+
+    # Little helper for centralized logging
+    def sql(request, parameters=()):
+        logger.debug(f"SQL => {request} with {parameters}")
+        return conn.execute(request, parameters)
+
+    # The playlist name is the m3u name
+    playlist_name = Path(m3u).stem
+
+    def find_location(path: str) -> int:
+        res = sql(
+            "SELECT id FROM track_locations WHERE location = ?", (path,)
+        ).fetchone()
+        if not res:
+            return TRACK_NOT_FOUND
+        return res[0]
+
+    # Retrieve the locations of all files
+    locations = list(
+        filter(lambda a: a != TRACK_NOT_FOUND, map(find_location, read_locations(m3u)))
+    )
+
+    def find_track_id(location: int) -> int:
+        res = sql("SELECT id FROM library WHERE location = ?", (location,)).fetchone()
+        return res[0]
+
+    # Get the actual tracks from the library from their locations
+    tracks_id = list(map(find_track_id, locations))
+
+    # Check if playlist with same name already exists
+    playlist_id = sql(
+        f"SELECT id FROM Playlists WHERE name = ?", (playlist_name,)
+    ).fetchone()
+    if not playlist_id:
+        # Get next id (might be unnecessary)
+        max_id = sql(f"SELECT MAX(id) FROM Playlists").fetchone()
+        if not max_id:
+            max_id = 1
+        else:
+            max_id = max_id[0] + 1
+        playlist_id = max_id
+    else:
+        # Delete playlist and all tracks associated
+        playlist_id = playlist_id[0]
+        sql(f"DELETE FROM PlaylistTracks WHERE playlist_id = {playlist_id}")
+        sql(f"DELETE FROM Playlists WHERE id = {playlist_id}")
+
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    position = 0
+
+    # Write all tracks
+    for t in tracks_id:
+        sql(
+            "INSERT INTO PlaylistTracks (playlist_id, track_id, position, pl_datetime_added) VALUES (:playlist_id, :track_id, :position, :pl_datetime_added)",
+            {
+                "playlist_id": playlist_id,
+                "track_id": t,
+                "position": position,
+                "pl_datetime_added": now,
+            },
+        )
+        position = position + 1
+
+    # Insert the playlist
+    sql(
+        f"INSERT INTO Playlists (id, name, position, date_created, date_modified, hidden, locked) VALUES (:id, :name, :position, :date_created, :date_modified, :hidden, :locked)",
+        {
+            "id": playlist_id,
+            "name": playlist_name,
+            "position": playlist_id,
+            "date_created": now,
+            "date_modified": now,
+            "hidden": 0,
+            "locked": 0,
+        },
+    )
+
+    # Write on disk
+    conn.commit()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -39,78 +122,7 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARN)
 
-    conn = sqlite3.connect(args.mix_db)
-
-    def sql(request, parameters=()):
-        logger.debug(f"SQL => {request} with {parameters}")
-        return conn.execute(request, parameters)
-
-    m3u = args.m3u
-    playlist_name = Path(m3u).stem
-
-    def find_location(path: str) -> int:
-        res = sql(
-            "SELECT id FROM track_locations WHERE location = ?", (path,)
-        ).fetchone()
-        if not res:
-            return TRACK_NOT_FOUND
-        return res[0]
-
-    locations = list(
-        filter(lambda a: a != TRACK_NOT_FOUND, map(find_location, read_locations(m3u)))
-    )
-
-    def find_track_id(location: int) -> int:
-        res = sql("SELECT id FROM library WHERE location = ?", (location,)).fetchone()
-        return res[0]
-
-    tracks_id = list(map(find_track_id, locations))
-
-    playlist_id = sql(
-        f"SELECT id FROM Playlists WHERE name = ?", (playlist_name,)
-    ).fetchone()
-    if not playlist_id:
-        max_id = sql(f"SELECT MAX(id) FROM Playlists").fetchone()
-        if not max_id:
-            max_id = 1
-        else:
-            max_id = max_id[0] + 1
-        playlist_id = max_id
-    else:
-        # Delete playlist and all tracks associated
-        playlist_id = playlist_id[0]
-        sql(f"DELETE FROM PlaylistTracks WHERE playlist_id = {playlist_id}")
-        sql(f"DELETE FROM Playlists WHERE id = {playlist_id}")
-
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    position = 0
-
-    # Generate the tracklist
-    for t in tracks_id:
-        sql(
-            "INSERT INTO PlaylistTracks (playlist_id, track_id, position, pl_datetime_added) VALUES (:playlist_id, :track_id, :position, :pl_datetime_added)",
-            {
-                "playlist_id": playlist_id,
-                "track_id": t,
-                "position": position,
-                "pl_datetime_added": now,
-            },
-        )
-
-    sql(
-        f"INSERT INTO Playlists (id, name, position, date_created, date_modified, hidden, locked) VALUES (:id, :name, :position, :date_created, :date_modified, :hidden, :locked)",
-        {
-            "id": playlist_id,
-            "name": playlist_name,
-            "position": playlist_id,
-            "date_created": now,
-            "date_modified": now,
-            "hidden": 0,
-            "locked": 0,
-        },
-    )
-
-    conn.commit()
+    run(args.mix_db, args.m3u)
 
 
 if __name__ == "__main__":
